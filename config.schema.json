@@ -1,0 +1,37 @@
+{
+    "pluginAlias": "lighthouse",
+    "pluginType": "platform",
+    "singular": true,
+    "headerDisplay": "Valve Lighthouse 2.0 plugin for Homebridge",
+    "footerDisplay": "Raise [Issues](https://github.com/Sunoo/homebridge-lighthouse/issues) or submit [Pull Requests](https://github.com/Sunoo/homebridge-lighthouse/pulls) on [Project Page](https://github.com/Sunoo/homebridge-aqicn).",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "title": "Name",
+                "type": "string",
+                "required": true,
+                "default": "Lighthouse",
+                "description": "A unique name for the accessory. It will be used as the accessory name in HomeKit."
+            },
+            "scanTimeout": {
+                "title": "Scan Timeout (Seconds)",
+                "type": "number",
+                "placeholder": 10,
+                "description": "Number of seconds to search for Lighthouses at startup."
+            },
+            "bleTimeout": {
+                "title": "BLE Timeout (Seconds)",
+                "type": "number",
+                "placeholder": 1,
+                "description": "Number of seconds to allow for BLE commands."
+            },
+            "updateFrequency": {
+                "title": "Update Polling Frequency (Seconds)",
+                "type": "number",
+                "placeholder": 60,
+                "description": "Number of seconds between attempts to check status of the Lighthouses."
+            }
+        }
+    }
+}
