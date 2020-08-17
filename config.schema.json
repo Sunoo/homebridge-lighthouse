@@ -23,13 +23,14 @@
             "bleTimeout": {
                 "title": "BLE Timeout (Seconds)",
                 "type": "number",
-                "placeholder": 1,
+                "placeholder": 1.5,
+                "multipleOf": 0.1,
                 "description": "Number of seconds to allow for BLE commands."
             },
             "updateFrequency": {
                 "title": "Update Polling Frequency (Seconds)",
                 "type": "number",
-                "placeholder": 60,
+                "placeholder": 30,
                 "description": "Number of seconds between attempts to check status of the Lighthouses."
             }
         }

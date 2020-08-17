@@ -2,7 +2,6 @@ import {
   API,
   APIEvent,
   CharacteristicValue,
-  CharacteristicGetCallback,
   CharacteristicSetCallback,
   DynamicPlatformPlugin,
   HAP,
@@ -26,6 +25,19 @@ const IDENTIFY_CHAR = '000084211212efde1523785feabcd124';
 const OFF_VAL = Buffer.from('00', 'hex');
 const ON_VAL = Buffer.from('01', 'hex');
 
+enum CommandType {
+  Identify,
+  PowerOn,
+  PowerOff,
+  GetUpdate
+}
+
+type Command = {
+  accessory: PlatformAccessory,
+  peripheral: noble.Peripheral,
+  type: CommandType
+};
+
 class LighthousePlatform implements DynamicPlatformPlugin {
   private readonly log: Logging;
   private readonly api: API;
@@ -33,10 +45,12 @@ class LighthousePlatform implements DynamicPlatformPlugin {
   private readonly peripherals: Array<noble.Peripheral> = [];
   private readonly cachedAccessories: Array<PlatformAccessory> = [];
   private readonly accessories: Array<PlatformAccessory> = [];
+  private readonly commandQueue: Array<Command> = [];
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly scanTimeout: number;
   private readonly bleTimeout: number;
   private readonly updateFrequency: number;
+  private queueRunning = false;
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
     this.log = log;
@@ -44,8 +58,8 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.api = api;
 
     this.scanTimeout = (this.config.scanTimeout || 10) * 1000;
-    this.bleTimeout = (this.config.bleTimeout || 1) * 1000;
-    this.updateFrequency = (this.config.updateFrequency || 60) * 1000;
+    this.bleTimeout = (this.config.bleTimeout || 1.5) * 1000;
+    this.updateFrequency = (this.config.updateFrequency || 30) * 1000;
 
     api.on(APIEvent.DID_FINISH_LAUNCHING, this.didFinishLaunching.bind(this));
   }
@@ -121,10 +135,10 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       noble.stopScanning();
 
       this.peripherals.forEach(async(curPer) => {
-        await this.getUpdate(curPer);
+        this.enqueueCommand(CommandType.GetUpdate, curPer);
       });
 
-      const badAccessories = this.accessories.filter((curAcc) => {
+      const badAccessories = this.cachedAccessories.filter((curAcc) => {
         return !this.peripherals.find((curPer) => {
           return curPer.advertisement.localName == curAcc.displayName;
         });
@@ -163,31 +177,14 @@ class LighthousePlatform implements DynamicPlatformPlugin {
 
     accessory.on(PlatformAccessoryEvent.IDENTIFY, () => {
       if (peripheral && accessory) {
-        this.log('Identifying ' + accessory.displayName + '...');
-        this.identifyLighthouse(peripheral)
-          .then(() => {
-            accessory?.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, true);
-          })
-          .catch((error) => {
-            this.log.error(peripheral.advertisement.localName + ': ' + error);
-          });
+        this.enqueueCommand(CommandType.Identify, peripheral, accessory);
       }
     });
 
     accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On)
       .on('set', (state: CharacteristicValue, callback: CharacteristicSetCallback) => {
-        this.log('Turning ' + peripheral.advertisement.localName + (state ? ' on...' : ' off...'));
-        this.powerLighthouse(peripheral, state as boolean)
-          .then(() => {
-            callback();
-          })
-          .catch((error) => {
-            callback(error);
-            this.log.error(peripheral.advertisement.localName + ': ' + error);
-          });
-      })
-      .on('get', (callback: CharacteristicGetCallback) => {
-        this.getUpdate(peripheral, callback);
+        this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, peripheral, accessory);
+        callback();
       });
 
     const accInfo = accessory.getService(hap.Service.AccessoryInformation);
@@ -199,7 +196,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     }
   }
 
-  getUpdate(peripheral: noble.Peripheral, callback?: CharacteristicGetCallback): Promise<void> {
+  getUpdate(accessory: PlatformAccessory, peripheral: noble.Peripheral): Promise<void> {
     const timer = this.timers.get(peripheral.advertisement.localName);
     if (timer) {
       clearTimeout(timer);
@@ -207,27 +204,87 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     }
     return this.statusLighthouse(peripheral)
       .then((isOn) => {
-        if (callback) {
-          callback(undefined, isOn);
-        } else {
-          const accessory = this.accessories.find((curAcc) => {
-            return curAcc.displayName == peripheral.advertisement.localName;
-          });
-          accessory?.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, isOn);
-        }
+        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, isOn);
       })
       .catch((error) => {
-        if (callback) {
-          callback();
-        }
         this.log.debug(peripheral.advertisement.localName + ': ' + error);
       })
       .finally(() => {
         const timer = setTimeout(() => {
-          this.getUpdate(peripheral);
+          this.enqueueCommand(CommandType.GetUpdate, peripheral, accessory);
         }, this.updateFrequency);
         this.timers.set(peripheral.advertisement.localName, timer);
       });
+  }
+
+  doIdentify(accessory: PlatformAccessory, peripheral: noble.Peripheral): Promise<void> {
+    this.log('Identifying ' + accessory.displayName + '...');
+    return this.identifyLighthouse(peripheral)
+      .then(() => {
+        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, true);
+      })
+      .catch((error) => {
+        this.log.error(peripheral.advertisement.localName + ': ' + error);
+      });
+  }
+
+  doPower(accessory: PlatformAccessory, peripheral: noble.Peripheral, state: boolean): Promise<void> {
+    this.log('Turning ' + peripheral.advertisement.localName + (state ? ' on...' : ' off...'));
+    return this.powerLighthouse(peripheral, state)
+      .catch((error) => {
+        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, !state);
+        this.log.error(peripheral.advertisement.localName + ': ' + error);
+      });
+  }
+
+  enqueueCommand(commandType: CommandType, peripheral: noble.Peripheral, accessory?: PlatformAccessory): void {
+    if (!accessory) {
+      accessory = this.accessories.find((curAcc) => {
+        return curAcc.displayName == peripheral.advertisement.localName;
+      });
+    }
+    if (accessory) {
+      this.commandQueue.push({
+        'accessory': accessory,
+        'peripheral': peripheral,
+        'type': commandType
+      });
+      if (!this.queueRunning) {
+        this.queueRunning = true;
+        this.nextCommand();
+      }
+    }
+  }
+
+  nextCommand(): void {
+    const todoItem = this.commandQueue.shift();
+    if (!todoItem) {
+      return;
+    }
+
+    let command;
+    switch (todoItem.type) {
+      case CommandType.Identify:
+        command = this.doIdentify(todoItem.accessory, todoItem.peripheral);
+        break;
+      case CommandType.PowerOn:
+        command = this.doPower(todoItem.accessory, todoItem.peripheral, true);
+        break;
+      case CommandType.PowerOff:
+        command = this.doPower(todoItem.accessory, todoItem.peripheral, false);
+        break;
+      case CommandType.GetUpdate:
+        command = this.getUpdate(todoItem.accessory, todoItem.peripheral);
+        break;
+    }
+
+    command.then(() => {
+      if (this.commandQueue.length > 0) {
+        this.nextCommand();
+      } else {
+        this.queueRunning = false;
+      }
+    });
   }
 }
 
