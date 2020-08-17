@@ -33,20 +33,27 @@ enum CommandType {
 }
 
 type Command = {
+  lighthouse: Lighthouse,
+  type: CommandType
+};
+
+type Lighthouse = {
+  name: string,
   accessory: PlatformAccessory,
   peripheral: noble.Peripheral,
-  type: CommandType
+  lastSuccess: Date,
+  writeFails: number,
+  readFails: number,
+  readTimer?: NodeJS.Timeout
 };
 
 class LighthousePlatform implements DynamicPlatformPlugin {
   private readonly log: Logging;
   private readonly api: API;
   private readonly config: LighthousePlatformConfig;
-  private readonly peripherals: Array<noble.Peripheral> = [];
   private readonly cachedAccessories: Array<PlatformAccessory> = [];
-  private readonly accessories: Array<PlatformAccessory> = [];
+  private readonly lighthouses: Array<Lighthouse> = [];
   private readonly commandQueue: Array<Command> = [];
-  private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly scanTimeout: number;
   private readonly bleTimeout: number;
   private readonly updateFrequency: number;
@@ -134,13 +141,13 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     setTimeout(() => {
       noble.stopScanning();
 
-      this.peripherals.forEach(async(curPer) => {
-        this.enqueueCommand(CommandType.GetUpdate, curPer);
+      this.lighthouses.forEach(async(curLH) => {
+        this.enqueueCommand(CommandType.GetUpdate, curLH);
       });
 
       const badAccessories = this.cachedAccessories.filter((curAcc) => {
-        return !this.peripherals.find((curPer) => {
-          return curPer.advertisement.localName == curAcc.displayName;
+        return !this.lighthouses.find((curLH) => {
+          return curLH.name == curAcc.displayName;
         });
       });
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, badAccessories);
@@ -149,7 +156,6 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     noble.on('discover', async(peripheral) => {
       if (peripheral.advertisement.localName?.startsWith('LHB-')) {
         this.log('Found ' + peripheral.advertisement.localName);
-        this.peripherals.push(peripheral);
         this.setupAccessory(peripheral);
       }
     });
@@ -173,17 +179,24 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     }
 
-    this.accessories.push(accessory);
+    const lighthouse: Lighthouse = {
+      name: peripheral.advertisement.localName,
+      accessory: accessory,
+      peripheral: peripheral,
+      lastSuccess: new Date(),
+      writeFails: 0,
+      readFails: 0
+    };
+
+    this.lighthouses.push(lighthouse);
 
     accessory.on(PlatformAccessoryEvent.IDENTIFY, () => {
-      if (peripheral && accessory) {
-        this.enqueueCommand(CommandType.Identify, peripheral, accessory);
-      }
+      this.enqueueCommand(CommandType.Identify, lighthouse);
     });
 
     accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On)
       .on('set', (state: CharacteristicValue, callback: CharacteristicSetCallback) => {
-        this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, peripheral, accessory);
+        this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, lighthouse);
         callback();
       });
 
@@ -196,63 +209,63 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     }
   }
 
-  getUpdate(accessory: PlatformAccessory, peripheral: noble.Peripheral): Promise<void> {
-    const timer = this.timers.get(peripheral.advertisement.localName);
-    if (timer) {
-      clearTimeout(timer);
-      this.timers.delete(peripheral.advertisement.localName);
+  getUpdate(lighthouse: Lighthouse): Promise<void> {
+    if (lighthouse.readTimer) {
+      clearTimeout(lighthouse.readTimer);
+      lighthouse.readTimer = undefined;
     }
-    return this.statusLighthouse(peripheral)
+    return this.statusLighthouse(lighthouse.peripheral)
       .then((isOn) => {
-        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, isOn);
+        lighthouse.lastSuccess = new Date();
+        lighthouse.readFails = 0;
+        lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, isOn);
       })
       .catch((error) => {
-        this.log.debug(peripheral.advertisement.localName + ': ' + error);
+        lighthouse.readFails++;
+        this.log.debug(lighthouse.name + ': ' + error + ' (' + lighthouse.readFails + ')');
       })
       .finally(() => {
-        const timer = setTimeout(() => {
-          this.enqueueCommand(CommandType.GetUpdate, peripheral, accessory);
+        lighthouse.readTimer = setTimeout(() => {
+          this.enqueueCommand(CommandType.GetUpdate, lighthouse);
         }, this.updateFrequency);
-        this.timers.set(peripheral.advertisement.localName, timer);
       });
   }
 
-  doIdentify(accessory: PlatformAccessory, peripheral: noble.Peripheral): Promise<void> {
-    this.log('Identifying ' + accessory.displayName + '...');
-    return this.identifyLighthouse(peripheral)
+  doIdentify(lighthouse: Lighthouse): Promise<void> {
+    this.log('Identifying ' + lighthouse.name + '...');
+    return this.identifyLighthouse(lighthouse.peripheral)
       .then(() => {
-        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, true);
+        lighthouse.lastSuccess = new Date();
+        lighthouse.writeFails = 0;
+        lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, true);
       })
       .catch((error) => {
-        this.log.error(peripheral.advertisement.localName + ': ' + error);
+        this.log.error(lighthouse.name + ': ' + error);
       });
   }
 
-  doPower(accessory: PlatformAccessory, peripheral: noble.Peripheral, state: boolean): Promise<void> {
-    this.log('Turning ' + peripheral.advertisement.localName + (state ? ' on...' : ' off...'));
-    return this.powerLighthouse(peripheral, state)
+  doPower(lighthouse: Lighthouse, state: boolean): Promise<void> {
+    this.log('Turning ' + lighthouse.name + (state ? ' on...' : ' off...'));
+    return this.powerLighthouse(lighthouse.peripheral, state)
+      .then(() => {
+        lighthouse.lastSuccess = new Date();
+        lighthouse.writeFails = 0;
+      })
       .catch((error) => {
-        accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, !state);
-        this.log.error(peripheral.advertisement.localName + ': ' + error);
+        lighthouse.writeFails++;
+        this.log.error(lighthouse.name + ': ' + error + ' (' + lighthouse.writeFails + ')');
+        lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, !state);
       });
   }
 
-  enqueueCommand(commandType: CommandType, peripheral: noble.Peripheral, accessory?: PlatformAccessory): void {
-    if (!accessory) {
-      accessory = this.accessories.find((curAcc) => {
-        return curAcc.displayName == peripheral.advertisement.localName;
-      });
-    }
-    if (accessory) {
-      this.commandQueue.push({
-        'accessory': accessory,
-        'peripheral': peripheral,
-        'type': commandType
-      });
-      if (!this.queueRunning) {
-        this.queueRunning = true;
-        this.nextCommand();
-      }
+  enqueueCommand(commandType: CommandType, lighthouse: Lighthouse): void {
+    this.commandQueue.push({
+      lighthouse: lighthouse,
+      type: commandType
+    });
+    if (!this.queueRunning) {
+      this.queueRunning = true;
+      this.nextCommand();
     }
   }
 
@@ -265,16 +278,16 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     let command;
     switch (todoItem.type) {
       case CommandType.Identify:
-        command = this.doIdentify(todoItem.accessory, todoItem.peripheral);
+        command = this.doIdentify(todoItem.lighthouse);
         break;
       case CommandType.PowerOn:
-        command = this.doPower(todoItem.accessory, todoItem.peripheral, true);
+        command = this.doPower(todoItem.lighthouse, true);
         break;
       case CommandType.PowerOff:
-        command = this.doPower(todoItem.accessory, todoItem.peripheral, false);
+        command = this.doPower(todoItem.lighthouse, false);
         break;
       case CommandType.GetUpdate:
-        command = this.getUpdate(todoItem.accessory, todoItem.peripheral);
+        command = this.getUpdate(todoItem.lighthouse);
         break;
     }
 
