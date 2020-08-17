@@ -218,11 +218,9 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       })
       .catch((error) => {
         if (callback) {
-          callback(error);
-          this.log.error(peripheral.advertisement.localName + ': ' + error);
-        } else {
-          this.log.debug(peripheral.advertisement.localName + ': ' + error);
+          callback();
         }
+        this.log.debug(peripheral.advertisement.localName + ': ' + error);
       })
       .finally(() => {
         const timer = setTimeout(() => {
