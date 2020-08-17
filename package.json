@@ -1,7 +1,7 @@
 {
   "displayName": "Homebridge Lighthouse",
   "name": "homebridge-lighthouse",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Valve Lighthouse 2.0 plugin for Homebridge",
   "main": "dist/index.js",
   "repository": {
@@ -54,6 +54,7 @@
     "homebridge": ">=1.0.0"
   },
   "dependencies": {
-    "@abandonware/noble": "^1.9.2-9"
+    "@sunookitsune/node-ble": "^1.2.0",
+    "p-timeout": "^3.2.0"
   }
 }

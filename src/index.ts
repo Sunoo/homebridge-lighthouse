@@ -10,7 +10,15 @@ import {
   PlatformAccessoryEvent,
   PlatformConfig
 } from 'homebridge';
-import noble from '@abandonware/noble';
+import {
+  createBluetooth,
+  Bluetooth,
+  Device,
+  GattServer,
+  GattService,
+  GattCharacteristic
+} from '@sunookitsune/node-ble';
+import pTimeout from 'p-timeout';
 import { LighthousePlatformConfig } from './configTypes';
 
 let hap: HAP;
@@ -19,11 +27,11 @@ let Accessory: typeof PlatformAccessory;
 const PLUGIN_NAME = 'homebridge-lighthouse';
 const PLATFORM_NAME = 'lighthouse';
 
-const CONTROL_SVC = '000015231212efde1523785feabcd124';
-const POWER_CHAR = '000015251212efde1523785feabcd124';
-const IDENTIFY_CHAR = '000084211212efde1523785feabcd124';
-const OFF_VAL = Buffer.from('00', 'hex');
-const ON_VAL = Buffer.from('01', 'hex');
+const CONTROL_SERVICE = '00001523-1212-efde-1523-785feabcd124';
+const POWER_CHARACTERISTIC = '00001525-1212-efde-1523-785feabcd124';
+const IDENTIFY_CHARACTERISTIC = '00008421-1212-efde-1523-785feabcd124';
+const OFF_VALUE = Buffer.from('00', 'hex');
+const ON_VALUE = Buffer.from('01', 'hex');
 
 enum CommandType {
   Identify,
@@ -40,7 +48,11 @@ type Command = {
 type Lighthouse = {
   name: string,
   accessory: PlatformAccessory,
-  peripheral: noble.Peripheral,
+  device: Device,
+  gatt?: GattServer,
+  controlService?: GattService,
+  powerCharacteristic?: GattCharacteristic,
+  identifyCharacteristic?: GattCharacteristic,
   lastSuccess: Date,
   writeFails: number,
   readFails: number,
@@ -68,111 +80,130 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.bleTimeout = (this.config.bleTimeout || 1.5) * 1000;
     this.updateFrequency = (this.config.updateFrequency || 30) * 1000;
 
-    api.on(APIEvent.DID_FINISH_LAUNCHING, this.didFinishLaunching.bind(this));
-  }
+    const {bluetooth, destroy} = createBluetooth();
 
-  powerLighthouse(peripheral: noble.Peripheral, on: boolean): Promise<void> {
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => {
-        reject('Write attempt timed out.');
-      }, this.bleTimeout);
+    api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
+      this.scanBle(bluetooth);
     });
-    const realPromise = peripheral.connectAsync()
-      .then(() => {
-        return peripheral.discoverSomeServicesAndCharacteristicsAsync([CONTROL_SVC], [POWER_CHAR]);
+    api.on(APIEvent.SHUTDOWN, destroy);
+  }
+
+  powerLighthouse(lighthouse: Lighthouse, on: boolean): Promise<void> {
+    const realPromise = lighthouse.device.connect()
+      .then(async() => {
+        if (!lighthouse.powerCharacteristic) {
+          if (!lighthouse.controlService) {
+            if (!lighthouse.gatt) {
+              lighthouse.gatt = await lighthouse.device.gatt();
+            }
+            lighthouse.controlService = await lighthouse.gatt.getPrimaryService(CONTROL_SERVICE);
+          }
+          lighthouse.powerCharacteristic = await lighthouse.controlService.getCharacteristic(POWER_CHARACTERISTIC);
+        }
+        return lighthouse.powerCharacteristic;
       })
-      .then(({characteristics}) => {
-        return characteristics[0].writeAsync(on ? ON_VAL : OFF_VAL, false);
+      .then((characteristic) => {
+        return characteristic.writeValue(on ? ON_VALUE : OFF_VALUE);
       });
-    return Promise.race([timeoutPromise, realPromise])
+    return pTimeout(realPromise, this.bleTimeout, 'Write attempt timed out.')
       .finally(() => {
-        peripheral.disconnectAsync();
+        lighthouse.device.disconnect();
       });
   }
 
-  statusLighthouse(peripheral: noble.Peripheral): Promise<boolean> {
-    const timeoutPromise = new Promise<boolean>((_, reject) => {
-      setTimeout(() => {
-        reject('Read attempt timed out.');
-      }, this.bleTimeout);
-    });
-    const realPromise = peripheral.connectAsync()
-      .then(() => {
-        return peripheral.discoverSomeServicesAndCharacteristicsAsync([CONTROL_SVC], [POWER_CHAR]);
+  statusLighthouse(lighthouse: Lighthouse): Promise<boolean> {
+    const realPromise = lighthouse.device.connect()
+      .then(async() => {
+        if (!lighthouse.powerCharacteristic) {
+          if (!lighthouse.controlService) {
+            if (!lighthouse.gatt) {
+              lighthouse.gatt = await lighthouse.device.gatt();
+            }
+            lighthouse.controlService = await lighthouse.gatt.getPrimaryService(CONTROL_SERVICE);
+          }
+          lighthouse.powerCharacteristic = await lighthouse.controlService.getCharacteristic(POWER_CHARACTERISTIC);
+        }
+        return lighthouse.powerCharacteristic;
       })
-      .then(({characteristics}) => {
-        return characteristics[0].readAsync();
-      })
-      .then((power) => {
-        return !power.equals(OFF_VAL);
+      .then(async(characteristic) => {
+        const power = await characteristic.readValue();
+        return !power.equals(OFF_VALUE);
       });
-    return Promise.race([timeoutPromise, realPromise])
+    return pTimeout(realPromise, this.bleTimeout, 'Read attempt timed out.')
       .finally(() => {
-        peripheral.disconnectAsync();
+        lighthouse.device.disconnect();
       });
   }
 
-  identifyLighthouse(peripheral: noble.Peripheral): Promise<void> {
-    const timeoutPromise = new Promise<void>((_, reject) => {
-      setTimeout(() => {
-        reject('Identify attempt timed out.');
-      }, this.bleTimeout);
-    });
-    const realPromise = peripheral.connectAsync()
-      .then(() => {
-        return peripheral.discoverSomeServicesAndCharacteristicsAsync([CONTROL_SVC], [IDENTIFY_CHAR]);
+  identifyLighthouse(lighthouse: Lighthouse): Promise<void> {
+    const realPromise = lighthouse.device.connect()
+      .then(async() => {
+        if (!lighthouse.identifyCharacteristic) {
+          if (!lighthouse.controlService) {
+            if (!lighthouse.gatt) {
+              lighthouse.gatt = await lighthouse.device.gatt();
+            }
+            lighthouse.controlService = await lighthouse.gatt.getPrimaryService(CONTROL_SERVICE);
+          }
+          lighthouse.identifyCharacteristic = await lighthouse.controlService.getCharacteristic(IDENTIFY_CHARACTERISTIC);
+        }
+        return lighthouse.identifyCharacteristic;
       })
-      .then(({characteristics}) => {
-        return characteristics[0].writeAsync(ON_VAL, false);
+      .then((characteristic) => {
+        return characteristic.writeValue(ON_VALUE);
       });
-    return Promise.race([timeoutPromise, realPromise])
+    return pTimeout(realPromise, this.bleTimeout, 'Identify attempt timed out.')
       .finally(() => {
-        peripheral.disconnectAsync();
+        lighthouse.device.disconnect();
       });
   }
 
-  didFinishLaunching(): void {
-    noble.on('warning', (message: string) => this.log.warn(message));
-    noble.on('scanStart', () => this.log('Scanning for Lighthouses...'));
-    noble.on('scanStop',  () => this.log('Scanning complete'));
+  async scanBle(bluetooth: Bluetooth): Promise<void> {
+    const adapter = await bluetooth.defaultAdapter();
 
-    noble.startScanning();
+    this.log('Scanning for Lighthouses...');
+    if (!await adapter.isDiscovering()) {
+      await adapter.startDiscovery();
+    }
 
-    setTimeout(() => {
-      noble.stopScanning();
-
-      this.lighthouses.forEach(async(curLH) => {
-        this.enqueueCommand(CommandType.GetUpdate, curLH);
+    setTimeout(async() => {
+      adapter.stopDiscovery();
+      this.log('Scanning complete');
+      const devices = await adapter.devices();
+      const uuids: Array<string> = [];
+      devices.forEach(async(mac) => {
+        const uuid = hap.uuid.generate(mac);
+        uuids.push(uuid);
+        try {
+          const device = await adapter.getDevice(mac);
+          const name = await device.getName();
+          if (name.startsWith('LHB-')) {
+            this.log('Found ' + name);
+            await this.setupAccessory(device, uuid);
+          }
+        } catch {} // eslint-disable-line no-empty
       });
 
       const badAccessories = this.cachedAccessories.filter((curAcc) => {
-        return !this.lighthouses.find((curLH) => {
-          return curLH.name == curAcc.displayName;
-        });
+        return !uuids.includes(curAcc.UUID);
       });
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, badAccessories);
     }, this.scanTimeout);
-
-    noble.on('discover', async(peripheral) => {
-      if (peripheral.advertisement.localName?.startsWith('LHB-')) {
-        this.log('Found ' + peripheral.advertisement.localName);
-        this.setupAccessory(peripheral);
-      }
-    });
   }
 
   configureAccessory(accessory: PlatformAccessory): void {
     this.cachedAccessories.push(accessory);
   }
 
-  setupAccessory(peripheral: noble.Peripheral): void {
+  async setupAccessory(device: Device, uuid: string): Promise<void> {
+    const name = await device.getName();
+
     let accessory = this.cachedAccessories.find(cachedAccessory => {
-      return cachedAccessory.displayName == peripheral.advertisement.localName;
+      return cachedAccessory.displayName == name;
     });
 
     if (!accessory) {
-      const uuid = hap.uuid.generate(peripheral.advertisement.localName);
-      accessory = new Accessory(peripheral.advertisement.localName, uuid);
+      accessory = new Accessory(name, uuid);
 
       accessory.addService(hap.Service.Switch);
 
@@ -180,9 +211,9 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     }
 
     const lighthouse: Lighthouse = {
-      name: peripheral.advertisement.localName,
+      name: name,
       accessory: accessory,
-      peripheral: peripheral,
+      device: device,
       lastSuccess: new Date(),
       writeFails: 0,
       readFails: 0
@@ -205,8 +236,10 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       accInfo
         .setCharacteristic(hap.Characteristic.Manufacturer, 'Valve Corporation')
         .setCharacteristic(hap.Characteristic.Model, 'Lighthouse 2.0')
-        .setCharacteristic(hap.Characteristic.SerialNumber, peripheral.advertisement.localName);
+        .setCharacteristic(hap.Characteristic.SerialNumber, name);
     }
+
+    this.enqueueCommand(CommandType.GetUpdate, lighthouse);
   }
 
   getUpdate(lighthouse: Lighthouse): Promise<void> {
@@ -214,7 +247,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       clearTimeout(lighthouse.readTimer);
       lighthouse.readTimer = undefined;
     }
-    return this.statusLighthouse(lighthouse.peripheral)
+    return this.statusLighthouse(lighthouse)
       .then((isOn) => {
         lighthouse.lastSuccess = new Date();
         lighthouse.readFails = 0;
@@ -233,7 +266,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
 
   doIdentify(lighthouse: Lighthouse): Promise<void> {
     this.log('Identifying ' + lighthouse.name + '...');
-    return this.identifyLighthouse(lighthouse.peripheral)
+    return this.identifyLighthouse(lighthouse)
       .then(() => {
         lighthouse.lastSuccess = new Date();
         lighthouse.writeFails = 0;
@@ -246,7 +279,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
 
   doPower(lighthouse: Lighthouse, state: boolean): Promise<void> {
     this.log('Turning ' + lighthouse.name + (state ? ' on...' : ' off...'));
-    return this.powerLighthouse(lighthouse.peripheral, state)
+    return this.powerLighthouse(lighthouse, state)
       .then(() => {
         lighthouse.lastSuccess = new Date();
         lighthouse.writeFails = 0;
