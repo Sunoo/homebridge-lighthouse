@@ -7,13 +7,39 @@
 ## Installation
 
 1. Install Homebridge using the [official instructions](https://github.com/homebridge/homebridge/wiki).
-2. Create the D-Bus configuration file. See below.
-3. Install this plugin using: `sudo npm install -g homebridge-lighthouse --unsafe-perm`.
-4. Update your configuration file. See sample config.json snippet below.
+2. Install this plugin using: `sudo npm install -g homebridge-lighthouse --unsafe-perm`.
+3. Update your configuration file. See sample config.json snippet below.
+
+### Homebridge Configuration
+
+Configuration sample:
+
+```json
+"platforms": [
+    {
+        "platform": "lighthouse",
+        "lighthouses": [
+          "LHB-ADD18BFB",
+          "LHB-02BF1E38"
+        ],
+        "scanTimeout": 10,
+        "bleTimeout": 1,
+        "updateFrequency": 60,
+    }
+]
+```
+
+#### Fields
+
+- "platform": Must always be "lighthouse". (required)
+- "lighthouses": An array of Lighthouses to connect to. If not set, all detected lighthouses will be added to HomeKit.
+- "scanTimeout": Number of seconds to search for Lighthouses at startup. (Default: `10`)
+- "bleTimeout": Number of seconds to allow for BLE commands. (Defualt: `1.5`)
+- "updateFrequency": Number of seconds between attempts to check status of the Lighthouses. (Default: `30`)
 
 ### D-Bus Configuration
 
-Create the file `/etc/dbus-1/system.d/homebridge-lighthouse.conf` with the following contents:
+If you are getting permission errors, you may need to create the file `/etc/dbus-1/system.d/homebridge-lighthouse.conf` with the following contents:
 
 ```xml
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
@@ -31,25 +57,3 @@ Create the file `/etc/dbus-1/system.d/homebridge-lighthouse.conf` with the follo
 ```
 
 If you are running Homebridge under an ID other than `homebridge`, change the `policy user` line above.
-
-### Homebridge Configuration
-
-Configuration sample:
-
-```json
-"platforms": [
-    {
-        "platform": "lighthouse",
-        "scanTimeout": 10,
-        "bleTimeout": 1,
-        "updateFrequency": 60,
-    }
-]
-```
-
-#### Fields
-
-* "platform": Must always be "lighthouse". (required)
-* "scanTimeout": Number of seconds to search for Lighthouses at startup.
-* "bleTimeout": Number of seconds to allow for BLE commands.
-* "updateFrequency": Number of seconds between attempts to check status of the Lighthouses.

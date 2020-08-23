@@ -2,6 +2,7 @@ import {
   API,
   APIEvent,
   CharacteristicValue,
+  CharacteristicGetCallback,
   CharacteristicSetCallback,
   DynamicPlatformPlugin,
   HAP,
@@ -170,24 +171,53 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       adapter.stopDiscovery();
       this.log('Scanning complete');
       const devices = await adapter.devices();
-      const uuids: Array<string> = [];
-      devices.forEach(async(mac) => {
-        const uuid = hap.uuid.generate(mac);
-        uuids.push(uuid);
+      const found: Array<string> = [];
+      for (const mac of devices) {
         try {
           const device = await adapter.getDevice(mac);
           const name = await device.getName();
-          if (name.startsWith('LHB-')) {
-            this.log('Found ' + name);
-            await this.setupAccessory(device, uuid);
+          if (this.config.lighthouses?.length > 0) {
+            if (this.config.lighthouses.includes(name)) {
+              this.log('Found: ' + name);
+              await this.setupAccessory(name, device);
+            } else if (name.startsWith('LHB-')) {
+              this.log('Found: ' + name + ' (skipped)');
+            }
+          } else if (name.startsWith('LHB-')) {
+            this.log('Found: ' + name);
+            await this.setupAccessory(name, device);
+            found.push(name);
           }
-        } catch {} // eslint-disable-line no-empty
-      });
+        } catch {
+          // Swallow error
+        }
+      }
 
-      const badAccessories = this.cachedAccessories.filter((curAcc) => {
-        return !uuids.includes(curAcc.UUID);
-      });
-      this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, badAccessories);
+      if (this.config.lighthouses?.length > 0) {
+        this.config.lighthouses.forEach((lhId) => {
+          const found = this.lighthouses.find((curLh) => {
+            return curLh.name == lhId;
+          });
+          if (!found) {
+            this.log('Not Found: ' + lhId);
+            this.setupAccessory(lhId);
+          }
+        });
+
+        this.cachedAccessories.forEach((curAcc) => {
+          if (!this.config.lighthouses.includes(curAcc.displayName)) {
+            this.log('Removing cached accessory: ' + curAcc.displayName);
+            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
+          }
+        });
+      } else {
+        this.cachedAccessories.forEach((curAcc) => {
+          if (!found.includes(curAcc.displayName)) {
+            this.log('Removing cached accessory: ' + curAcc.displayName);
+            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
+          }
+        });
+      }
     }, this.scanTimeout);
   }
 
@@ -195,41 +225,19 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.cachedAccessories.push(accessory);
   }
 
-  async setupAccessory(device: Device, uuid: string): Promise<void> {
-    const name = await device.getName();
-
+  async setupAccessory(name: string, device?: Device): Promise<void> {
     let accessory = this.cachedAccessories.find(cachedAccessory => {
       return cachedAccessory.displayName == name;
     });
 
     if (!accessory) {
+      const uuid = hap.uuid.generate(name);
       accessory = new Accessory(name, uuid);
 
       accessory.addService(hap.Service.Switch);
 
       this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
     }
-
-    const lighthouse: Lighthouse = {
-      name: name,
-      accessory: accessory,
-      device: device,
-      lastSuccess: new Date(),
-      writeFails: 0,
-      readFails: 0
-    };
-
-    this.lighthouses.push(lighthouse);
-
-    accessory.on(PlatformAccessoryEvent.IDENTIFY, () => {
-      this.enqueueCommand(CommandType.Identify, lighthouse);
-    });
-
-    accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On)
-      .on('set', (state: CharacteristicValue, callback: CharacteristicSetCallback) => {
-        this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, lighthouse);
-        callback();
-      });
 
     const accInfo = accessory.getService(hap.Service.AccessoryInformation);
     if (accInfo) {
@@ -239,7 +247,37 @@ class LighthousePlatform implements DynamicPlatformPlugin {
         .setCharacteristic(hap.Characteristic.SerialNumber, name);
     }
 
-    this.enqueueCommand(CommandType.GetUpdate, lighthouse);
+    if (device) {
+      const lighthouse: Lighthouse = {
+        name: name,
+        accessory: accessory,
+        device: device,
+        lastSuccess: new Date(),
+        writeFails: 0,
+        readFails: 0
+      };
+      this.lighthouses.push(lighthouse);
+
+      accessory.on(PlatformAccessoryEvent.IDENTIFY, () => {
+        this.enqueueCommand(CommandType.Identify, lighthouse);
+      });
+
+      accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On)
+        .on('set', (state: CharacteristicValue, callback: CharacteristicSetCallback) => {
+          this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, lighthouse);
+          callback();
+        });
+
+      this.enqueueCommand(CommandType.GetUpdate, lighthouse);
+    } else {
+      accessory.getService(hap.Service.Switch)?.getCharacteristic(hap.Characteristic.On)
+        .on('set', (state: CharacteristicValue, callback: CharacteristicSetCallback) => {
+          callback(new Error());
+        })
+        .on('get', (callback: CharacteristicGetCallback) => {
+          callback(new Error());
+        });
+    }
   }
 
   getUpdate(lighthouse: Lighthouse): Promise<void> {
