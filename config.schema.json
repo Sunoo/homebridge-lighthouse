@@ -14,6 +14,23 @@
                 "default": "Lighthouse",
                 "description": "A unique name for the accessory. It will be used as the accessory name in HomeKit."
             },
+            "lighthouses": {
+                "title": "Lighthouses",
+                "type": "array",
+                "minItems": 0,
+                "description": "An array of Lighthouses to connect to. If not set, all detected lighthouses will be added to HomeKit.",
+                "items": {
+                    "title": "Lighthouse ID",
+                    "type": "string",
+                    "required": true,
+                    "placeholder": "LHB-4F3BB11E",
+                    "pattern": "^LHB-[0-9A-F]{8}$",
+                    "validationMessages": {
+                        "pattern": "Lighthouse ID must be \"LHB-\" followed by 8 hex digits."
+                    },
+                    "description": "The ID of the Lighthouse."
+                }
+            },
             "scanTimeout": {
                 "title": "Scan Timeout (Seconds)",
                 "type": "number",
