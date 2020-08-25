@@ -19,6 +19,7 @@ import {
   GattService,
   GattCharacteristic
 } from '@sunookitsune/node-ble';
+import fs from 'fs';
 import pTimeout from 'p-timeout';
 import { LighthousePlatformConfig } from './configTypes';
 
@@ -81,12 +82,19 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.bleTimeout = (this.config.bleTimeout || 1.5) * 1000;
     this.updateFrequency = (this.config.updateFrequency || 30) * 1000;
 
-    const {bluetooth, destroy} = createBluetooth();
+    try {
+      if (!fs.statSync('/var/run/dbus/system_bus_socket').isSocket()) {
+        throw new Error('not a socket, /var/run/dbus/system_bus_socket');
+      }
 
-    api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
-      this.scanBle(bluetooth);
-    });
-    api.on(APIEvent.SHUTDOWN, destroy);
+      const {bluetooth, destroy} = createBluetooth();
+      api.on(APIEvent.DID_FINISH_LAUNCHING, () => {
+        this.scanBle(bluetooth);
+      });
+      api.on(APIEvent.SHUTDOWN, destroy);
+    } catch (err) {
+      this.log.error('Error setting up BLE connection: ' + err);
+    }
   }
 
   powerLighthouse(lighthouse: Lighthouse, on: boolean): Promise<void> {
