@@ -159,66 +159,74 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       });
   }
 
-  async scanBle(bluetooth: Bluetooth): Promise<void> {
-    const adapter = await bluetooth.defaultAdapter();
+  finishScan(found: Array<string>): void {
+    if (this.config.lighthouses?.length > 0) {
+      this.config.lighthouses.forEach((lhId) => {
+        const lh = this.lighthouses.find((curLh) => {
+          return curLh.name == lhId;
+        });
+        if (!lh) {
+          this.log('Not Found: ' + lhId);
+          this.setupAccessory(lhId);
+        }
+      });
 
-    this.log('Scanning for Lighthouses...');
-    if (!await adapter.isDiscovering()) {
-      await adapter.startDiscovery();
+      this.cachedAccessories.forEach((curAcc) => {
+        if (!this.config.lighthouses.includes(curAcc.displayName)) {
+          this.log('Removing cached accessory: ' + curAcc.displayName);
+          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
+        }
+      });
+    } else {
+      this.cachedAccessories.forEach((curAcc) => {
+        if (!found.includes(curAcc.displayName)) {
+          this.log('Removing cached accessory: ' + curAcc.displayName);
+          this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
+        }
+      });
     }
+  }
 
-    setTimeout(async() => {
-      adapter.stopDiscovery();
-      this.log('Scanning complete');
-      const devices = await adapter.devices();
-      const found: Array<string> = [];
-      for (const mac of devices) {
-        try {
-          const device = await adapter.getDevice(mac);
-          const name = await device.getName();
-          if (this.config.lighthouses?.length > 0) {
-            if (this.config.lighthouses.includes(name)) {
+  async scanBle(bluetooth: Bluetooth): Promise<void> {
+    try {
+      const adapter = await bluetooth.defaultAdapter();
+
+      this.log('Scanning for Lighthouses...');
+      if (!await adapter.isDiscovering()) {
+        await adapter.startDiscovery();
+      }
+
+      setTimeout(async() => {
+        adapter.stopDiscovery();
+        this.log('Scanning complete');
+        const devices = await adapter.devices();
+        const found: Array<string> = [];
+        for (const mac of devices) {
+          try {
+            const device = await adapter.getDevice(mac);
+            const name = await device.getName();
+            if (this.config.lighthouses?.length > 0) {
+              if (this.config.lighthouses.includes(name)) {
+                this.log('Found: ' + name);
+                await this.setupAccessory(name, device);
+              } else if (name.startsWith('LHB-')) {
+                this.log('Found: ' + name + ' (skipped)');
+              }
+            } else if (name.startsWith('LHB-')) {
               this.log('Found: ' + name);
               await this.setupAccessory(name, device);
-            } else if (name.startsWith('LHB-')) {
-              this.log('Found: ' + name + ' (skipped)');
+              found.push(name);
             }
-          } else if (name.startsWith('LHB-')) {
-            this.log('Found: ' + name);
-            await this.setupAccessory(name, device);
-            found.push(name);
+          } catch {
+            // Swallow error
           }
-        } catch {
-          // Swallow error
         }
-      }
-
-      if (this.config.lighthouses?.length > 0) {
-        this.config.lighthouses.forEach((lhId) => {
-          const found = this.lighthouses.find((curLh) => {
-            return curLh.name == lhId;
-          });
-          if (!found) {
-            this.log('Not Found: ' + lhId);
-            this.setupAccessory(lhId);
-          }
-        });
-
-        this.cachedAccessories.forEach((curAcc) => {
-          if (!this.config.lighthouses.includes(curAcc.displayName)) {
-            this.log('Removing cached accessory: ' + curAcc.displayName);
-            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
-          }
-        });
-      } else {
-        this.cachedAccessories.forEach((curAcc) => {
-          if (!found.includes(curAcc.displayName)) {
-            this.log('Removing cached accessory: ' + curAcc.displayName);
-            this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
-          }
-        });
-      }
-    }, this.scanTimeout);
+        this.finishScan(found);
+      }, this.scanTimeout);
+    } catch (err) {
+      this.log.error('Error scanning for Lighthouses: ' + err);
+      this.finishScan([]);
+    }
   }
 
   configureAccessory(accessory: PlatformAccessory): void {
