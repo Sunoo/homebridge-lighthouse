@@ -17,6 +17,10 @@
   ],
   "author": "David Maher",
   "license": "BSD-2-Clause",
+  "os": [
+    "!win32",
+    "!darwin"
+  ],
   "funding": [
     {
       "type": "kofi",

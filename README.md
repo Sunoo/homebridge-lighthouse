@@ -4,6 +4,8 @@
 
 [Valve Lighthouse 2.0](https://www.valvesoftware.com/en/index/base-stations) plugin for [Homebridge](https://homebridge.io)
 
+This plugin relies on [BlueZ](http://www.bluez.org) and [D-Bus](http://dbus.freedesktop.org), so will not run on Windows or Mac.
+
 ## Installation
 
 1. Install Homebridge using the [official instructions](https://github.com/homebridge/homebridge/wiki).
