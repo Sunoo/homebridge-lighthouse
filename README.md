@@ -1,6 +1,6 @@
 # homebridge-lighthouse
 
-[![npm](https://img.shields.io/npm/v/homebridge-lighthouse) ![npm](https://img.shields.io/npm/dt/homebridge-lighthouse)](https://www.npmjs.com/package/homebridge-lighthouse)
+[![npm](https://img.shields.io/npm/v/homebridge-lighthouse) ![npm](https://img.shields.io/npm/dt/homebridge-lighthouse)](https://www.npmjs.com/package/homebridge-lighthouse) [![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 
 [Valve Lighthouse 2.0](https://www.valvesoftware.com/en/index/base-stations) plugin for [Homebridge](https://homebridge.io)
 
