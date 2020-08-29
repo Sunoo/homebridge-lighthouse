@@ -44,7 +44,8 @@ enum CommandType {
 
 type Command = {
   lighthouse: Lighthouse,
-  type: CommandType
+  type: CommandType,
+  attempt: number
 };
 
 type Lighthouse = {
@@ -55,9 +56,6 @@ type Lighthouse = {
   controlService?: GattService,
   powerCharacteristic?: GattCharacteristic,
   identifyCharacteristic?: GattCharacteristic,
-  lastSuccess: Date,
-  writeFails: number,
-  readFails: number,
   readTimer?: NodeJS.Timeout
 };
 
@@ -68,6 +66,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
   private readonly cachedAccessories: Array<PlatformAccessory> = [];
   private readonly lighthouses: Array<Lighthouse> = [];
   private readonly commandQueue: Array<Command> = [];
+  private readonly retries: number;
   private readonly scanTimeout: number;
   private readonly bleTimeout: number;
   private readonly updateFrequency: number;
@@ -78,6 +77,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.config = config as unknown as LighthousePlatformConfig;
     this.api = api;
 
+    this.retries = this.config.retries || 3;
     this.scanTimeout = (this.config.scanTimeout || 10) * 1000;
     this.bleTimeout = (this.config.bleTimeout || 1.5) * 1000;
     this.updateFrequency = (this.config.updateFrequency || 30) * 1000;
@@ -267,10 +267,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       const lighthouse: Lighthouse = {
         name: name,
         accessory: accessory,
-        device: device,
-        lastSuccess: new Date(),
-        writeFails: 0,
-        readFails: 0
+        device: device
       };
       this.lighthouses.push(lighthouse);
 
@@ -303,13 +300,10 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     }
     return this.statusLighthouse(lighthouse)
       .then((isOn) => {
-        lighthouse.lastSuccess = new Date();
-        lighthouse.readFails = 0;
         lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, isOn);
       })
       .catch((error) => {
-        lighthouse.readFails++;
-        this.log.debug(lighthouse.name + ': ' + error + ' (' + lighthouse.readFails + ')');
+        this.log.debug(lighthouse.name + ': Error getting update: ' + error );
       })
       .finally(() => {
         lighthouse.readTimer = setTimeout(() => {
@@ -322,33 +316,33 @@ class LighthousePlatform implements DynamicPlatformPlugin {
     this.log('Identifying ' + lighthouse.name + '...');
     return this.identifyLighthouse(lighthouse)
       .then(() => {
-        lighthouse.lastSuccess = new Date();
-        lighthouse.writeFails = 0;
         lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, true);
       })
       .catch((error) => {
-        this.log.error(lighthouse.name + ': ' + error);
+        this.log.error(lighthouse.name + ': Error identifying: ' + error);
       });
   }
 
-  doPower(lighthouse: Lighthouse, state: boolean): Promise<void> {
-    this.log('Turning ' + lighthouse.name + (state ? ' on...' : ' off...'));
+  doPower(lighthouse: Lighthouse, state: boolean, attempt: number): Promise<void> {
+    this.log('Turning ' + lighthouse.name + (state ? ' on...' : ' off...') +
+      (attempt > 1 ? ' (Attempt ' + attempt + ')' : ''));
     return this.powerLighthouse(lighthouse, state)
-      .then(() => {
-        lighthouse.lastSuccess = new Date();
-        lighthouse.writeFails = 0;
-      })
       .catch((error) => {
-        lighthouse.writeFails++;
-        this.log.error(lighthouse.name + ': ' + error + ' (' + lighthouse.writeFails + ')');
-        lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, !state);
+        if (attempt < this.retries) {
+          this.log.debug(lighthouse.name + ': Error setting power, retrying: ' + error);
+          this.enqueueCommand(state ? CommandType.PowerOn : CommandType.PowerOff, lighthouse, attempt + 1);
+        } else {
+          this.log.error(lighthouse.name + ': Error setting power: ' + error);
+          lighthouse.accessory.getService(hap.Service.Switch)?.updateCharacteristic(hap.Characteristic.On, !state);
+        }
       });
   }
 
-  enqueueCommand(commandType: CommandType, lighthouse: Lighthouse): void {
+  enqueueCommand(commandType: CommandType, lighthouse: Lighthouse, attempt = 1): void {
     this.commandQueue.push({
       lighthouse: lighthouse,
-      type: commandType
+      type: commandType,
+      attempt: attempt
     });
     if (!this.queueRunning) {
       this.queueRunning = true;
@@ -368,10 +362,10 @@ class LighthousePlatform implements DynamicPlatformPlugin {
         command = this.doIdentify(todoItem.lighthouse);
         break;
       case CommandType.PowerOn:
-        command = this.doPower(todoItem.lighthouse, true);
+        command = this.doPower(todoItem.lighthouse, true, todoItem.attempt);
         break;
       case CommandType.PowerOff:
-        command = this.doPower(todoItem.lighthouse, false);
+        command = this.doPower(todoItem.lighthouse, false, todoItem.attempt);
         break;
       case CommandType.GetUpdate:
         command = this.getUpdate(todoItem.lighthouse);

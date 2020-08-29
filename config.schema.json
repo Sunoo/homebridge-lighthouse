@@ -31,6 +31,12 @@
                     "description": "The ID of the Lighthouse."
                 }
             },
+            "retries": {
+                "title": "Maximum Retries",
+                "type": "number",
+                "placeholder": 3,
+                "description": "Number of times to retry sending power commands to Lighthouses."
+            },
             "scanTimeout": {
                 "title": "Scan Timeout (Seconds)",
                 "type": "number",

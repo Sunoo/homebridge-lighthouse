@@ -35,6 +35,7 @@ Configuration sample:
 
 - "platform": Must always be "lighthouse". (required)
 - "lighthouses": An array of Lighthouses to connect to. If not set, all detected lighthouses will be added to HomeKit.
+- "retries": Number of times to retry sending power commands to Lighthouses. (Default: `3`)
 - "scanTimeout": Number of seconds to search for Lighthouses at startup. (Default: `10`)
 - "bleTimeout": Number of seconds to allow for BLE commands. (Defualt: `1.5`)
 - "updateFrequency": Number of seconds between attempts to check status of the Lighthouses. (Default: `30`)
