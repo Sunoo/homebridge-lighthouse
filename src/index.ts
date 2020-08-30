@@ -18,7 +18,7 @@ import {
   GattServer,
   GattService,
   GattCharacteristic
-} from '@sunookitsune/node-ble';
+} from 'node-ble';
 import fs from 'fs';
 import pTimeout from 'p-timeout';
 import { LighthousePlatformConfig } from './configTypes';
