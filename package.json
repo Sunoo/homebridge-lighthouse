@@ -77,6 +77,6 @@
   },
   "dependencies": {
     "node-ble": "^1.2.0",
-    "p-timeout": "^3.2.0"
+    "p-timeout": "^4.0.0"
   }
 }
