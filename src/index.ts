@@ -74,7 +74,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
 
   constructor(log: Logging, config: PlatformConfig, api: API) {
     this.log = log;
-    this.config = config as unknown as LighthousePlatformConfig;
+    this.config = config as LighthousePlatformConfig;
     this.api = api;
 
     this.retries = this.config.retries || 3;
@@ -168,7 +168,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
   }
 
   finishScan(found: Array<string>): void {
-    if (this.config.lighthouses?.length > 0) {
+    if (this.config.lighthouses && this.config.lighthouses.length > 0) {
       this.config.lighthouses.forEach((lhId) => {
         const lh = this.lighthouses.find((curLh) => {
           return curLh.name == lhId;
@@ -180,7 +180,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
       });
 
       this.cachedAccessories.forEach((curAcc) => {
-        if (!this.config.lighthouses.includes(curAcc.displayName)) {
+        if (!this.config.lighthouses?.includes(curAcc.displayName)) {
           this.log('Removing cached accessory: ' + curAcc.displayName);
           this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [curAcc]);
         }
@@ -213,7 +213,7 @@ class LighthousePlatform implements DynamicPlatformPlugin {
           try {
             const device = await adapter.getDevice(mac);
             const name = await device.getName();
-            if (this.config.lighthouses?.length > 0) {
+            if (this.config.lighthouses && this.config.lighthouses.length > 0) {
               if (this.config.lighthouses.includes(name)) {
                 this.log('Found: ' + name);
                 await this.setupAccessory(name, device);
